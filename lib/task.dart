@@ -14,4 +14,20 @@ class Task {
   String? description;
   TaskStatus status;
   DateTime? deadline;
+
+  Task copyWith({
+    int? id,
+    String? title,
+    String? description,
+    DateTime? deadline,
+    TaskStatus? status,
+  }) {
+    return Task(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      description: description ?? this.description,
+      deadline: deadline ?? this.deadline,
+      status: status ?? this.status,
+    );
+  }
 }
