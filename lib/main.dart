@@ -1,10 +1,29 @@
 import 'package:flutter/material.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import './login_screen.dart';
+import 'dart:io';
+import 'package:path/path.dart';
 
-void main() {
+void main() async {
+  // Ensure that Flutter bindings are initialized
+  WidgetsFlutterBinding.ensureInitialized();
+
   // Initialize FFI for sqflite on desktop
   sqfliteFfiInit();
+  
+  // Force deletion of the old, corrupted database file
+  try {
+    var databasesPath = await getDatabasesPath();
+    String oldPath = join(databasesPath, 'tasks_database.db');
+    File oldDbFile = File(oldPath);
+    if (await oldDbFile.exists()) {
+      await oldDbFile.delete();
+      print("Old database deleted.");
+    }
+  } catch (e) {
+    print("Error deleting old database: $e");
+  }
+
   databaseFactory = databaseFactoryFfi;
 
   runApp(const MyApp());

@@ -6,6 +6,7 @@ class Task {
     required this.title,
     this.description,
     this.deadline,
+    this.participantCount = 1,
     TaskStatus? status,
   }) : status = status ?? TaskStatus.inProgress;
 
@@ -14,6 +15,7 @@ class Task {
   String? description;
   TaskStatus status;
   DateTime? deadline;
+  final int participantCount;
 
   Task copyWith({
     int? id,
@@ -21,6 +23,7 @@ class Task {
     String? description,
     DateTime? deadline,
     TaskStatus? status,
+    int? participantCount,
   }) {
     return Task(
       id: id ?? this.id,
@@ -28,6 +31,7 @@ class Task {
       description: description ?? this.description,
       deadline: deadline ?? this.deadline,
       status: status ?? this.status,
+      participantCount: participantCount ?? this.participantCount,
     );
   }
 }

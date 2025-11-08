@@ -4,6 +4,7 @@ import './task.dart';
 import './task_detail_screen.dart';
 import './database_helper.dart';
 import './login_screen.dart';
+import './notifications_screen.dart';
 
 class TodoListScreen extends StatefulWidget {
   final int userId;
@@ -28,20 +29,21 @@ class _TodoListScreenState extends State<TodoListScreen> {
 
   Future<void> _loadTasks() async {
     final tasks = await DatabaseHelper.instance.getTasks(widget.userId);
-    setState(() {
-      _tasks = tasks;
-    });
+    if (mounted) {
+      setState(() {
+        _tasks = tasks;
+      });
+    }
   }
 
   Future<void> _addTask(String title, String? description, DateTime? deadline) async {
     if (title.isNotEmpty) {
       final task = Task(title: title, description: description, deadline: deadline);
-      final id = await DatabaseHelper.instance.addTask(task, widget.userId);
-      final newTask = task.copyWith(id: id);
-
-      setState(() {
-        _tasks.add(newTask);
-      });
+      await DatabaseHelper.instance.addTask(task, widget.userId);
+      _loadTasks();
+      _titleController.clear();
+      _descriptionController.clear();
+      _selectedDate = null;
     }
   }
 
@@ -49,7 +51,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
     setState(() {
       _tasks.removeAt(index);
     });
-    await DatabaseHelper.instance.deleteTask(taskId);
+    await DatabaseHelper.instance.deleteTask(taskId, widget.userId);
   }
 
   Future<void> _toggleTaskCompletion(Task task) async {
@@ -58,26 +60,26 @@ class _TodoListScreenState extends State<TodoListScreen> {
           ? TaskStatus.inProgress
           : TaskStatus.completed,
     );
-    await DatabaseHelper.instance.updateTask(updatedTask);
-    _loadTasks(); // Reload to reflect changes
+    await DatabaseHelper.instance.updateTask(updatedTask, widget.userId);
+    _loadTasks();
   }
 
   void _navigateToDetail(Task task) async {
-    final result = await Navigator.of(context).push<Map<String, dynamic>>(
+    await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => TaskDetailScreen(task: task),
+        builder: (context) => TaskDetailScreen(task: task, currentUserId: widget.userId),
       ),
     );
+    _loadTasks();
+  }
 
-    if (result != null) {
-      final updatedTask = task.copyWith(
-        title: result['title'],
-        description: result['description'],
-        status: result['status'],
-      );
-      await DatabaseHelper.instance.updateTask(updatedTask);
-      _loadTasks(); // Reload to reflect changes
-    }
+  void _navigateToNotifications() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => NotificationsScreen(userId: widget.userId),
+      ),
+    );
+    _loadTasks();
   }
 
   void _logout() {
@@ -201,6 +203,11 @@ class _TodoListScreenState extends State<TodoListScreen> {
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         actions: [
           IconButton(
+            icon: const Icon(Icons.notifications_none),
+            onPressed: _navigateToNotifications,
+            tooltip: 'Notifications',
+          ),
+          IconButton(
             icon: const Icon(Icons.logout),
             onPressed: _logout,
           ),
@@ -230,21 +237,37 @@ class _TodoListScreenState extends State<TodoListScreen> {
                         borderRadius: BorderRadius.circular(4),
                       ),
                     ),
-                    title: Text(
-                      task.title,
-                      style: TextStyle(
-                        decoration: task.status == TaskStatus.completed
-                            ? TextDecoration.lineThrough
-                            : TextDecoration.none,
-                        color: task.status == TaskStatus.completed ? Colors.grey[500] : Colors.white,
-                        fontWeight: task.status == TaskStatus.completed ? FontWeight.normal : FontWeight.w500,
-                      ),
-                    ),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    title: Row(
                       children: [
-                        if (task.description != null && task.description!.isNotEmpty)
-                          Padding(
+                        Expanded(
+                          child: Text(
+                            task.title,
+                            style: TextStyle(
+                              decoration: task.status == TaskStatus.completed
+                                  ? TextDecoration.lineThrough
+                                  : TextDecoration.none,
+                              color: task.status == TaskStatus.completed
+                                  ? Colors.grey[500]
+                                  : Colors.white,
+                              fontWeight: task.status == TaskStatus.completed
+                                  ? FontWeight.normal
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        Chip(
+                          avatar: Icon(Icons.person, size: 16, color: Colors.white70),
+                          label: Text(
+                            '${task.participantCount}',
+                            style: TextStyle(color: Colors.white70),
+                          ),
+                          backgroundColor: Colors.white.withOpacity(0.1),
+                          padding: EdgeInsets.zero,
+                        ),
+                      ],
+                    ),
+                    subtitle: task.description != null && task.description!.isNotEmpty
+                        ? Padding(
                             padding: const EdgeInsets.only(top: 4.0),
                             child: Text(
                               task.description!,
@@ -252,18 +275,9 @@ class _TodoListScreenState extends State<TodoListScreen> {
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                             ),
-                          ),
-                        if (task.deadline != null)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 4.0),
-                            child: Text(
-                              intl.DateFormat('Deadline: yyyy-MM-dd – kk:mm').format(task.deadline!),
-                              style: TextStyle(color: Colors.grey[400]),
-                            ),
-                          ),
-                      ],
-                    ),
-                    isThreeLine: true,
+                          )
+                        : null,
+                    isThreeLine: task.description != null && task.description!.isNotEmpty,
                     trailing: IconButton(
                       icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
                       onPressed: () => _removeTask(task.id!, index),
