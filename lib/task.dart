@@ -17,6 +17,17 @@ class Task {
   DateTime? deadline;
   final int participantCount;
 
+  factory Task.fromMap(Map<String, dynamic> map) {
+    return Task(
+      id: map['id'] as int?,
+      title: map['title'] as String,
+      description: map['description'] as String?,
+      status: TaskStatus.values.firstWhere((e) => e.toString() == map['status']),
+      deadline: map['deadline'] != null ? DateTime.parse(map['deadline']) : null,
+      participantCount: map['participantCount'] as int? ?? 1,
+    );
+  }
+
   Task copyWith({
     int? id,
     String? title,

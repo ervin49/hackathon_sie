@@ -4,7 +4,8 @@ import './task.dart';
 import './task_detail_screen.dart';
 import './database_helper.dart';
 import './login_screen.dart';
-import './notifications_screen.dart';
+import './notifications_center_screen.dart';
+import './groups_screen.dart';
 
 class TodoListScreen extends StatefulWidget {
   final int userId;
@@ -37,21 +38,17 @@ class _TodoListScreenState extends State<TodoListScreen> {
   }
 
   Future<void> _addTask(String title, String? description, DateTime? deadline) async {
-    if (title.isNotEmpty) {
-      final task = Task(title: title, description: description, deadline: deadline);
-      await DatabaseHelper.instance.addTask(task, widget.userId);
-      _loadTasks();
-      _titleController.clear();
-      _descriptionController.clear();
-      _selectedDate = null;
-    }
+    final task = Task(title: title, description: description, deadline: deadline);
+    await DatabaseHelper.instance.addTask(task, widget.userId);
+    _loadTasks();
+    _titleController.clear();
+    _descriptionController.clear();
+    _selectedDate = null;
   }
 
-  Future<void> _removeTask(int taskId, int index) async {
-    setState(() {
-      _tasks.removeAt(index);
-    });
+  Future<void> _removeTask(int taskId) async {
     await DatabaseHelper.instance.deleteTask(taskId, widget.userId);
+    _loadTasks();
   }
 
   Future<void> _toggleTaskCompletion(Task task) async {
@@ -76,7 +73,16 @@ class _TodoListScreenState extends State<TodoListScreen> {
   void _navigateToNotifications() async {
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => NotificationsScreen(userId: widget.userId),
+        builder: (context) => NotificationsCenterScreen(userId: widget.userId),
+      ),
+    );
+    _loadTasks();
+  }
+
+  void _navigateToGroups() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => GroupsScreen(userId: widget.userId),
       ),
     );
     _loadTasks();
@@ -119,68 +125,63 @@ class _TodoListScreenState extends State<TodoListScreen> {
     _selectedDate = null;
     _titleController.clear();
     _descriptionController.clear();
+    final formKey = GlobalKey<FormState>();
+
     return showDialog<void>(
       context: context,
       builder: (BuildContext context) {
         return StatefulBuilder(
           builder: (context, setState) {
             return AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(15.0),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15.0)),
               title: const Text('Add a new task'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: _titleController,
-                    decoration: const InputDecoration(
-                      hintText: 'Enter task title',
-                      border: OutlineInputBorder(),
+              content: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextFormField(
+                      controller: _titleController,
+                      decoration: const InputDecoration(hintText: 'Enter task title'),
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Please enter a title';
+                        }
+                        if (value.length < 3) {
+                          return 'Title must be at least 3 characters long';
+                        }
+                        return null;
+                      },
                     ),
-                    autofocus: true,
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _descriptionController,
-                    decoration: const InputDecoration(
-                      hintText: 'Enter task description',
-                      border: OutlineInputBorder(),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _descriptionController,
+                      decoration: const InputDecoration(hintText: 'Enter task description'),
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Please enter a description';
+                        }
+                        return null;
+                      },
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          _selectedDate == null
-                              ? 'No deadline set'
-                              : intl.DateFormat('yyyy-MM-dd – kk:mm').format(_selectedDate!),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.calendar_today),
-                        onPressed: () => _selectDate(context, setState),
-                      )
-                    ],
-                  )
-                ],
-              ),
-              actions: <Widget>[
-                TextButton(
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                  },
-                  child: const Text('Cancel'),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(child: Text(_selectedDate == null ? 'No deadline set' : intl.DateFormat('yyyy-MM-dd – kk:mm').format(_selectedDate!))),
+                        IconButton(icon: const Icon(Icons.calendar_today), onPressed: () => _selectDate(context, setState)),
+                      ],
+                    )
+                  ],
                 ),
-                TextButton(
-                  style: TextButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    backgroundColor: Theme.of(context).colorScheme.primary,
-                  ),
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+                ElevatedButton(
                   onPressed: () {
-                    _addTask(_titleController.text, _descriptionController.text, _selectedDate);
-                    Navigator.of(context).pop();
+                    if (formKey.currentState!.validate()) {
+                      _addTask(_titleController.text, _descriptionController.text, _selectedDate);
+                      Navigator.of(context).pop();
+                    }
                   },
                   child: const Text('Add'),
                 ),
@@ -196,26 +197,25 @@ class _TodoListScreenState extends State<TodoListScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'To-Do List',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        title: const Text('Your Tasks'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.notifications_none),
-            onPressed: _navigateToNotifications,
-            tooltip: 'Notifications',
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: _logout,
-          ),
+          IconButton(icon: const Icon(Icons.group_outlined), onPressed: _navigateToGroups, tooltip: 'Groups'),
+          IconButton(icon: const Icon(Icons.notifications_outlined), onPressed: _navigateToNotifications, tooltip: 'Notifications'),
+          IconButton(icon: const Icon(Icons.logout_outlined), onPressed: _logout, tooltip: 'Logout'),
         ],
       ),
       body: _tasks.isEmpty
-          ? const Center(
-              child: Text('No tasks yet. Add one!'),
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.library_add_check_outlined, size: 100, color: Colors.grey.withOpacity(0.5)),
+                  const SizedBox(height: 20),
+                  Text('No tasks yet.', style: Theme.of(context).textTheme.headlineSmall?.copyWith(color: Colors.grey)),
+                  const SizedBox(height: 8),
+                  Text('Tap the + button to add your first task.', style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.grey)),
+                ],
+              ),
             )
           : ListView.builder(
               itemCount: _tasks.length,
@@ -223,19 +223,12 @@ class _TodoListScreenState extends State<TodoListScreen> {
                 final task = _tasks[index];
                 return Card(
                   child: ListTile(
-                    onTap: () {
-                      _navigateToDetail(task);
-                    },
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    onTap: () => _navigateToDetail(task),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                     leading: Checkbox(
                       value: task.status == TaskStatus.completed,
-                      onChanged: (bool? value) {
-                        _toggleTaskCompletion(task);
-                      },
-                      activeColor: Theme.of(context).colorScheme.primary,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(4),
-                      ),
+                      onChanged: (bool? value) => _toggleTaskCompletion(task),
+                      activeColor: Theme.of(context).colorScheme.secondary,
                     ),
                     title: Row(
                       children: [
@@ -243,44 +236,28 @@ class _TodoListScreenState extends State<TodoListScreen> {
                           child: Text(
                             task.title,
                             style: TextStyle(
-                              decoration: task.status == TaskStatus.completed
-                                  ? TextDecoration.lineThrough
-                                  : TextDecoration.none,
-                              color: task.status == TaskStatus.completed
-                                  ? Colors.grey[500]
-                                  : Colors.white,
-                              fontWeight: task.status == TaskStatus.completed
-                                  ? FontWeight.normal
-                                  : FontWeight.w500,
+                              decoration: task.status == TaskStatus.completed ? TextDecoration.lineThrough : TextDecoration.none,
+                              color: task.status == TaskStatus.completed ? Colors.grey : Colors.white,
+                              fontWeight: FontWeight.bold,
                             ),
                           ),
                         ),
                         Chip(
-                          avatar: Icon(Icons.person, size: 16, color: Colors.white70),
-                          label: Text(
-                            '${task.participantCount}',
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                          backgroundColor: Colors.white.withOpacity(0.1),
-                          padding: EdgeInsets.zero,
+                          avatar: Icon(Icons.person, size: 16, color: Theme.of(context).colorScheme.onSecondaryContainer),
+                          label: Text('${task.participantCount}'),
                         ),
                       ],
                     ),
                     subtitle: task.description != null && task.description!.isNotEmpty
                         ? Padding(
-                            padding: const EdgeInsets.only(top: 4.0),
-                            child: Text(
-                              task.description!,
-                              style: TextStyle(color: Colors.grey[400]),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                            padding: const EdgeInsets.only(top: 8.0),
+                            child: Text(task.description!, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.grey[400])),
                           )
                         : null,
                     isThreeLine: task.description != null && task.description!.isNotEmpty,
                     trailing: IconButton(
                       icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                      onPressed: () => _removeTask(task.id!, index),
+                      onPressed: () => _removeTask(task.id!),
                     ),
                   ),
                 );
@@ -289,7 +266,6 @@ class _TodoListScreenState extends State<TodoListScreen> {
       floatingActionButton: FloatingActionButton(
         onPressed: _displayDialog,
         tooltip: 'Add Task',
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: const Icon(Icons.add),
       ),
     );

@@ -3,6 +3,7 @@ import 'package:intl/intl.dart' as intl;
 import './task.dart';
 import './database_helper.dart';
 import './history.dart';
+import './group.dart';
 
 class TaskDetailScreen extends StatefulWidget {
   final Task task;
@@ -22,6 +23,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   List<String> _participants = [];
   List<Map<String, dynamic>> _allUsers = [];
   List<History> _history = [];
+  List<Group> _groups = [];
 
   @override
   void initState() {
@@ -32,6 +34,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     _loadParticipants();
     _loadAllUsers();
     _loadHistory();
+    _loadGroups();
   }
 
   @override
@@ -43,50 +46,47 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
 
   Future<void> _loadParticipants() async {
     final participants = await DatabaseHelper.instance.getTaskParticipants(widget.task.id!);
-    setState(() {
-      _participants = participants;
-    });
+    if (mounted) setState(() => _participants = participants);
   }
 
   Future<void> _loadAllUsers() async {
     final users = await DatabaseHelper.instance.getAllUsers();
-    setState(() {
-      _allUsers = users;
-    });
+    if (mounted) setState(() => _allUsers = users);
   }
 
   Future<void> _loadHistory() async {
     final history = await DatabaseHelper.instance.getTaskHistory(widget.task.id!);
-    setState(() {
-      _history = history;
-    });
+    if (mounted) setState(() => _history = history);
   }
 
-  String _statusToString(TaskStatus status) {
-    return status == TaskStatus.inProgress ? 'In Progress' : 'Completed';
+  Future<void> _loadGroups() async {
+    final groups = await DatabaseHelper.instance.getGroupsForUser(widget.currentUserId);
+    if (mounted) setState(() => _groups = groups);
   }
 
-  Color _statusToColor(TaskStatus status) {
-    return status == TaskStatus.inProgress ? Colors.blue : Colors.green;
-  }
+  String _statusToString(TaskStatus status) => status == TaskStatus.inProgress ? 'In Progress' : 'Completed';
 
-  Future<void> _saveAndPop() async {
+  Color _statusToColor(TaskStatus status) => status == TaskStatus.inProgress ? Colors.blueAccent : Colors.green;
+
+  Future<void> _saveChanges() async {
     final updatedTask = widget.task.copyWith(
       title: _titleController.text,
       description: _descriptionController.text,
       status: _status,
     );
     await DatabaseHelper.instance.updateTask(updatedTask, widget.currentUserId);
+    _loadHistory();
     if (mounted) {
-      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Changes applied!')),
+      );
     }
   }
 
   Future<void> _showSendInvitationDialog() async {
     int? selectedUserId;
-    final availableUsers = _allUsers.where((user) {
-      return !_participants.contains(user['username'] as String) && user['id'] != widget.currentUserId;
-    }).toList();
+    int? selectedGroupId;
+    final availableUsers = _allUsers.where((user) => !_participants.contains(user['username'] as String) && user['id'] != widget.currentUserId).toList();
 
     await showDialog(
       context: context,
@@ -95,37 +95,46 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           builder: (context, setState) {
             return AlertDialog(
               title: const Text('Send Invitation'),
-              content: DropdownButton<int>(
-                hint: const Text('Select a user to invite'),
-                value: selectedUserId,
-                isExpanded: true,
-                items: availableUsers.map((user) {
-                  return DropdownMenuItem<int>(
-                    value: user['id'] as int,
-                    child: Text(user['username'] as String),
-                  );
-                }).toList(),
-                onChanged: (value) {
-                  setState(() {
-                    selectedUserId = value;
-                  });
-                },
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  DropdownButton<int>(
+                    hint: const Text('Select a user to invite'),
+                    value: selectedUserId,
+                    isExpanded: true,
+                    items: availableUsers.map((user) => DropdownMenuItem<int>(value: user['id'] as int, child: Text(user['username'] as String))).toList(),
+                    onChanged: (value) => setState(() => selectedUserId = value),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text('Or invite a group:'),
+                  DropdownButton<int>(
+                    hint: const Text('Select a group to invite'),
+                    value: selectedGroupId,
+                    isExpanded: true,
+                    items: _groups.map((group) => DropdownMenuItem<int>(value: group.id, child: Text(group.name))).toList(),
+                    onChanged: (value) => setState(() => selectedGroupId = value),
+                  ),
+                ],
               ),
               actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
-                ),
-                TextButton(
+                TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+                ElevatedButton(
                   onPressed: () async {
                     if (selectedUserId != null) {
-                      await DatabaseHelper.instance.sendInvitation(widget.currentUserId, selectedUserId!, widget.task.id!);
-                      if (mounted) {
-                        Navigator.of(context).pop();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Invitation sent!')),
-                        );
+                      await DatabaseHelper.instance.sendTaskInvitation(widget.currentUserId, selectedUserId!, widget.task.id!);
+                    } else if (selectedGroupId != null) {
+                      final members = await DatabaseHelper.instance.getGroupMembers(selectedGroupId!);
+                      for (var member in members) {
+                        if (member['id'] != widget.currentUserId) {
+                          await DatabaseHelper.instance.sendTaskInvitation(widget.currentUserId, member['id'] as int, widget.task.id!);
+                        }
                       }
+                    }
+                    _loadHistory();
+                    if (mounted) {
+                      Navigator.of(context).pop();
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Invitation(s) sent!')));
                     }
                   },
                   child: const Text('Send'),
@@ -140,102 +149,86 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Task Details'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: _saveAndPop,
-        ),
-      ),
-      body: WillPopScope(
-        onWillPop: () async {
-          await _saveAndPop();
-          return true;
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: ListView(
-            children: [
-              TextField(
-                controller: _titleController,
-                style: Theme.of(context).textTheme.headlineSmall,
-                decoration: const InputDecoration(labelText: 'Title', border: OutlineInputBorder()),
-              ),
-              const SizedBox(height: 16.0),
-              TextField(
-                controller: _descriptionController,
-                decoration: const InputDecoration(labelText: 'Description', border: OutlineInputBorder()),
-                maxLines: 3,
-              ),
-              const SizedBox(height: 16.0),
-              Row(
-                children: [
-                  const Text('Status:'),
-                  const SizedBox(width: 8.0),
-                  Text(_statusToString(_status), style: TextStyle(color: _statusToColor(_status), fontWeight: FontWeight.bold)),
-                ],
-              ),
-              if (widget.task.deadline != null) ...[
-                const SizedBox(height: 16.0),
-                Row(
-                  children: [
-                    const Text('Deadline:'),
-                    const SizedBox(width: 8.0),
-                    Text(intl.DateFormat('yyyy-MM-dd – h:mm a').format(widget.task.deadline!), style: const TextStyle(fontWeight: FontWeight.bold)),
-                  ],
-                ),
+      appBar: AppBar(title: const Text('Task Details')),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: ListView(
+          children: [
+            TextField(controller: _titleController, style: theme.textTheme.headlineSmall, decoration: const InputDecoration(labelText: 'Title')),
+            const SizedBox(height: 20.0),
+            TextField(controller: _descriptionController, decoration: const InputDecoration(labelText: 'Description'), maxLines: null, keyboardType: TextInputType.multiline),
+            const SizedBox(height: 24.0),
+            _buildSectionHeader(context, 'Status'),
+            const SizedBox(height: 8.0),
+            Row(
+              children: [
+                const Icon(Icons.info_outline, size: 20),
+                const SizedBox(width: 12.0),
+                Text(_statusToString(_status), style: theme.textTheme.bodyLarge?.copyWith(color: _statusToColor(_status), fontWeight: FontWeight.bold)),
               ],
-              const SizedBox(height: 24.0),
-              const Text('Change Status:', style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8.0),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  ElevatedButton(onPressed: () => setState(() => _status = TaskStatus.inProgress), child: const Text('In Progress')),
-                  ElevatedButton(onPressed: () => setState(() => _status = TaskStatus.completed), child: const Text('Completed')),
-                ],
-              ),
-              const SizedBox(height: 24.0),
-              const Divider(),
+            ),
+            if (widget.task.deadline != null) ...[
               const SizedBox(height: 16.0),
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Participants', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                  IconButton(onPressed: _showSendInvitationDialog, icon: const Icon(Icons.person_add_alt_1_outlined), tooltip: 'Invite User'),
+                  const Icon(Icons.timer_outlined, size: 20),
+                  const SizedBox(width: 12.0),
+                  Text(intl.DateFormat('MMM d, yyyy – h:mm a').format(widget.task.deadline!), style: theme.textTheme.bodyLarge),
                 ],
               ),
-              const SizedBox(height: 8.0),
-              Wrap(
-                spacing: 8.0,
-                runSpacing: 4.0,
-                children: _participants.map((name) => Chip(label: Text(name))).toList(),
-              ),
-              const SizedBox(height: 24.0),
-              const Divider(),
-              const SizedBox(height: 16.0),
-              const Text('History', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              const SizedBox(height: 8.0),
-              _history.isEmpty
-                  ? const Text('No history for this task yet.')
-                  : ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _history.length,
-                      itemBuilder: (context, index) {
-                        final event = _history[index];
-                        return ListTile(
-                          leading: const Icon(Icons.history),
-                          title: Text(event.action),
-                          subtitle: Text('by ${event.username} at ${intl.DateFormat('yyyy-MM-dd – h:mm a').format(DateTime.parse(event.timestamp))}'),
-                        );
-                      },
-                    ),
             ],
-          ),
+            const SizedBox(height: 24.0),
+            _buildSectionHeader(context, 'Change Status'),
+            const SizedBox(height: 12.0),
+            SegmentedButton<TaskStatus>(
+              segments: const [
+                ButtonSegment(value: TaskStatus.inProgress, label: Text('In Progress'), icon: Icon(Icons.work_history_outlined)),
+                ButtonSegment(value: TaskStatus.completed, label: Text('Completed'), icon: Icon(Icons.check_circle_outline)),
+              ],
+              selected: {_status},
+              onSelectionChanged: (newSelection) => setState(() => _status = newSelection.first),
+            ),
+            const SizedBox(height: 24.0),
+            SizedBox(width: double.infinity, child: ElevatedButton(onPressed: _saveChanges, child: const Text('Apply Changes'))),
+            const SizedBox(height: 24.0),
+            _buildSectionHeader(context, 'Participants', action: IconButton(onPressed: _showSendInvitationDialog, icon: const Icon(Icons.person_add_alt_1), tooltip: 'Invite User')),
+            const SizedBox(height: 8.0),
+            _participants.isEmpty
+                ? const Text('Just you for now.')
+                : Wrap(spacing: 8.0, runSpacing: 8.0, children: _participants.map((name) => Chip(avatar: const Icon(Icons.person), label: Text(name))).toList()),
+            const SizedBox(height: 24.0),
+            _buildSectionHeader(context, 'History'),
+            const SizedBox(height: 8.0),
+            _history.isEmpty
+                ? const Text('No history for this task yet.')
+                : ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: _history.length,
+                    itemBuilder: (context, index) {
+                      final event = _history[index];
+                      return ListTile(
+                        leading: const Icon(Icons.history),
+                        title: Text(event.action),
+                        subtitle: Text('by ${event.username} at ${intl.DateFormat('MMM d, h:mm a').format(DateTime.parse(event.timestamp))}'),
+                      );
+                    },
+                  ),
+          ],
         ),
       ),
+    );
+  }
+
+  Widget _buildSectionHeader(BuildContext context, String title, {Widget? action}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(title, style: Theme.of(context).textTheme.titleLarge),
+        if (action != null) action,
+      ],
     );
   }
 }
