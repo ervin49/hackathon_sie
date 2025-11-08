@@ -115,7 +115,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     const Text('Deadline:'),
                     const SizedBox(width: 8.0),
                     Text(
-                      DateFormat('yyyy-MM-dd – kk:mm').format(widget.task.deadline!),
+                      DateFormat('yyyy-MM-dd – h:mm a').format(widget.task.deadline!),
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                   ],
