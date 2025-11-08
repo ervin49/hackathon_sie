@@ -97,6 +97,15 @@ class DatabaseHelper {
     return await db.query('users');
   }
 
+  Future<Map<String, dynamic>?> getUserById(int id) async {
+    final db = await instance.database;
+    final maps = await db.query('users', where: 'id = ?', whereArgs: [id]);
+    if (maps.isNotEmpty) {
+      return maps.first;
+    }
+    return null;
+  }
+
   Future<int> addTask(Task task, int ownerId) async {
     final db = await instance.database;
     final taskId = await db.insert('tasks', {'ownerId': ownerId, 'title': task.title, 'description': task.description, 'status': task.status.toString(), 'deadline': task.deadline?.toIso8601String()});
