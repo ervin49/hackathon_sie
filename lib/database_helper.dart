@@ -18,8 +18,9 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), 'tasks_database.db');
     return await openDatabase(
       path,
-      version: 1,
+      version: 2, // Version bumped to force an upgrade
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
   }
 
@@ -44,10 +45,30 @@ class DatabaseHelper {
     ''');
   }
 
+  // This will clear the old database on upgrade
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    await db.execute('DROP TABLE IF EXISTS tasks');
+    await db.execute('DROP TABLE IF EXISTS users');
+    await _onCreate(db, newVersion);
+  }
+
   // User methods
-  Future<int> registerUser(String username, String password) async {
+  Future<bool> registerUser(String username, String password) async {
     final db = await instance.database;
-    return await db.insert('users', {'username': username, 'password': password});
+    final List<Map<String, dynamic>> maps = await db.query(
+      'users',
+      where: 'username = ?',
+      whereArgs: [username],
+    );
+
+    if (maps.isNotEmpty) {
+      // User already exists
+      return false;
+    } else {
+      // User does not exist, create it
+      await db.insert('users', {'username': username, 'password': password});
+      return true;
+    }
   }
 
   Future<Map<String, dynamic>?> loginUser(String username, String password) async {
@@ -84,7 +105,7 @@ class DatabaseHelper {
     );
     return List.generate(maps.length, (i) {
       return Task(
-        id: maps[i]['id'],
+        id: maps[i]['id'] as int?,
         title: maps[i]['title'],
         description: maps[i]['description'],
         status: TaskStatus.values.firstWhere((e) => e.toString() == maps[i]['status']),
@@ -116,12 +137,4 @@ class DatabaseHelper {
       whereArgs: [id],
     );
   }
-}
-
-// Add id to Task model
-extension TaskWithId on Task {
-  int? get id => _id;
-  static int? _id;
-
-  set id(int? value) => _id = value;
 }

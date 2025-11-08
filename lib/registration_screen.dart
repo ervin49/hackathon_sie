@@ -17,15 +17,16 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     if (_formKey.currentState!.validate()) {
       final username = _usernameController.text;
       final password = _passwordController.text;
-      try {
-        await DatabaseHelper.instance.registerUser(username, password);
+      final bool success = await DatabaseHelper.instance.registerUser(username, password);
+
+      if (success) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Registration successful!')),
           );
           Navigator.of(context).pop();
         }
-      } catch (e) {
+      } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Username already exists')),
