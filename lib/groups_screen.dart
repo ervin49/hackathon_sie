@@ -84,6 +84,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
                 return Card(
                   margin: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
                   child: ListTile(
+                    leading: const Icon(Icons.group, size: 40),
                     onTap: () => _navigateToGroupDetail(group),
                     title: Text(group.name, style: const TextStyle(fontWeight: FontWeight.bold)),
                     subtitle: Text('${group.memberCount} member(s)'),

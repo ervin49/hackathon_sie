@@ -7,6 +7,7 @@ import './login_screen.dart';
 import './notifications_center_screen.dart';
 import './groups_screen.dart';
 import './notification_service.dart';
+import './profile_screen.dart';
 
 class TodoListScreen extends StatefulWidget {
   final int userId;
@@ -19,6 +20,7 @@ class TodoListScreen extends StatefulWidget {
 
 class _TodoListScreenState extends State<TodoListScreen> {
   List<Task> _tasks = [];
+  int _notificationCount = 0;
   final _titleController = TextEditingController();
   final _descriptionController = TextEditingController();
   DateTime? _selectedDate;
@@ -27,7 +29,12 @@ class _TodoListScreenState extends State<TodoListScreen> {
   @override
   void initState() {
     super.initState();
-    _loadTasks();
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    await _loadTasks();
+    await _loadNotificationCount();
   }
 
   Future<void> _loadTasks() async {
@@ -35,6 +42,15 @@ class _TodoListScreenState extends State<TodoListScreen> {
     if (mounted) {
       setState(() {
         _tasks = tasks;
+      });
+    }
+  }
+
+  Future<void> _loadNotificationCount() async {
+    final notifications = await DatabaseHelper.instance.getNotifications(widget.userId);
+    if (mounted) {
+      setState(() {
+        _notificationCount = notifications.where((n) => n.status == 'pending').length;
       });
     }
   }
@@ -74,8 +90,8 @@ class _TodoListScreenState extends State<TodoListScreen> {
         builder: (context) => TaskDetailScreen(task: task, currentUserId: widget.userId),
       ),
     );
-    _loadTasks();
-    final updatedTask = _tasks.firstWhere((t) => t.id == task.id);
+    _loadData(); // Reload all data
+    final updatedTask = _tasks.firstWhere((t) => t.id == task.id, orElse: () => task);
     if (updatedTask.deadline != originalDeadline) {
       if (originalDeadline != null) {
         _notificationService.cancelNotification(task.id!);
@@ -92,7 +108,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
         builder: (context) => NotificationsCenterScreen(userId: widget.userId),
       ),
     );
-    _loadTasks();
+    _loadData(); // Reload all data
   }
 
   void _navigateToGroups() async {
@@ -101,13 +117,14 @@ class _TodoListScreenState extends State<TodoListScreen> {
         builder: (context) => GroupsScreen(userId: widget.userId),
       ),
     );
-    _loadTasks();
+    _loadData(); // Reload all data
   }
 
-  void _logout() {
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (context) => const LoginScreen()),
-      (Route<dynamic> route) => false,
+  void _navigateToProfile() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => ProfileScreen(userId: widget.userId),
+      ),
     );
   }
 
@@ -216,8 +233,33 @@ class _TodoListScreenState extends State<TodoListScreen> {
         title: const Text('Your Tasks'),
         actions: [
           IconButton(icon: const Icon(Icons.group_outlined), onPressed: _navigateToGroups, tooltip: 'Groups'),
-          IconButton(icon: const Icon(Icons.notifications_outlined), onPressed: _navigateToNotifications, tooltip: 'Notifications'),
-          IconButton(icon: const Icon(Icons.logout_outlined), onPressed: _logout, tooltip: 'Logout'),
+          Stack(
+            alignment: Alignment.center,
+            children: [
+              IconButton(icon: const Icon(Icons.notifications_outlined), onPressed: _navigateToNotifications, tooltip: 'Notifications'),
+              if (_notificationCount > 0)
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Text(
+                      '$_notificationCount',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          IconButton(icon: const Icon(Icons.person_outline), onPressed: _navigateToProfile, tooltip: 'Profile'),
         ],
       ),
       body: _tasks.isEmpty

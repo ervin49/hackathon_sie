@@ -73,7 +73,6 @@ class NotificationService {
           importance: Importance.max,
           priority: Priority.high,
         ),
-        // Add Linux notification details
         linux: LinuxNotificationDetails(),
       ),
       androidAllowWhileIdle: true,
