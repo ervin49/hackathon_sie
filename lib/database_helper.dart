@@ -2,6 +2,19 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import './task.dart';
 
+enum RegistrationResult {
+  success,
+  usernameExists,
+  passwordUsed,
+}
+
+class RegistrationResponse {
+  final RegistrationResult result;
+  final String? username;
+
+  RegistrationResponse(this.result, {this.username});
+}
+
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._privateConstructor();
   static Database? _database;
@@ -18,7 +31,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), 'tasks_database.db');
     return await openDatabase(
       path,
-      version: 2, // Version bumped to force an upgrade
+      version: 2,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -45,30 +58,38 @@ class DatabaseHelper {
     ''');
   }
 
-  // This will clear the old database on upgrade
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     await db.execute('DROP TABLE IF EXISTS tasks');
     await db.execute('DROP TABLE IF EXISTS users');
     await _onCreate(db, newVersion);
   }
 
-  // User methods
-  Future<bool> registerUser(String username, String password) async {
+  Future<RegistrationResponse> registerUser(String username, String password) async {
     final db = await instance.database;
-    final List<Map<String, dynamic>> maps = await db.query(
+
+    final usernameCheck = await db.query(
       'users',
       where: 'username = ?',
       whereArgs: [username],
     );
-
-    if (maps.isNotEmpty) {
-      // User already exists
-      return false;
-    } else {
-      // User does not exist, create it
-      await db.insert('users', {'username': username, 'password': password});
-      return true;
+    if (usernameCheck.isNotEmpty) {
+      return RegistrationResponse(RegistrationResult.usernameExists);
     }
+
+    final passwordCheck = await db.query(
+      'users',
+      where: 'password = ?',
+      whereArgs: [password],
+    );
+    if (passwordCheck.isNotEmpty) {
+      return RegistrationResponse(
+        RegistrationResult.passwordUsed,
+        username: passwordCheck.first['username'] as String?,
+      );
+    }
+
+    await db.insert('users', {'username': username, 'password': password});
+    return RegistrationResponse(RegistrationResult.success);
   }
 
   Future<Map<String, dynamic>?> loginUser(String username, String password) async {
@@ -84,7 +105,6 @@ class DatabaseHelper {
     return null;
   }
 
-  // Task methods
   Future<int> addTask(Task task, int userId) async {
     final db = await instance.database;
     return await db.insert('tasks', {
@@ -108,8 +128,11 @@ class DatabaseHelper {
         id: maps[i]['id'] as int?,
         title: maps[i]['title'],
         description: maps[i]['description'],
-        status: TaskStatus.values.firstWhere((e) => e.toString() == maps[i]['status']),
-        deadline: maps[i]['deadline'] != null ? DateTime.parse(maps[i]['deadline']) : null,
+        status: TaskStatus.values
+            .firstWhere((e) => e.toString() == maps[i]['status']),
+        deadline: maps[i]['deadline'] != null
+            ? DateTime.parse(maps[i]['deadline'])
+            : null,
       );
     });
   }

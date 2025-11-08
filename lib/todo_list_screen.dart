@@ -14,8 +14,7 @@ class TodoListScreen extends StatefulWidget {
   State<TodoListScreen> createState() => _TodoListScreenState();
 }
 
-class _TodoListScreenState extends State<TodoListScreen> with SingleTickerProviderStateMixin {
-  final GlobalKey<AnimatedListState> _listKey = GlobalKey<AnimatedListState>();
+class _TodoListScreenState extends State<TodoListScreen> {
   List<Task> _tasks = [];
   final _titleController = TextEditingController();
   final _descriptionController = TextEditingController();
@@ -29,10 +28,9 @@ class _TodoListScreenState extends State<TodoListScreen> with SingleTickerProvid
 
   Future<void> _loadTasks() async {
     final tasks = await DatabaseHelper.instance.getTasks(widget.userId);
-    for (var i = 0; i < tasks.length; i++) {
-      _tasks.add(tasks[i]);
-      _listKey.currentState?.insertItem(i);
-    }
+    setState(() {
+      _tasks = tasks;
+    });
   }
 
   Future<void> _addTask(String title, String? description, DateTime? deadline) async {
@@ -41,43 +39,27 @@ class _TodoListScreenState extends State<TodoListScreen> with SingleTickerProvid
       final id = await DatabaseHelper.instance.addTask(task, widget.userId);
       final newTask = task.copyWith(id: id);
 
-      _tasks.add(newTask);
-      _listKey.currentState?.insertItem(_tasks.length - 1);
-
-      _titleController.clear();
-      _descriptionController.clear();
-      _selectedDate = null;
+      setState(() {
+        _tasks.add(newTask);
+      });
     }
   }
 
   Future<void> _removeTask(int taskId, int index) async {
-    final taskToRemove = _tasks[index];
-    _tasks.removeAt(index);
-    _listKey.currentState?.removeItem(
-      index,
-      (context, animation) => _buildRemovedTaskItem(taskToRemove, animation),
-      duration: const Duration(milliseconds: 500),
-    );
+    setState(() {
+      _tasks.removeAt(index);
+    });
     await DatabaseHelper.instance.deleteTask(taskId);
   }
 
-  Widget _buildRemovedTaskItem(Task task, Animation<double> animation) {
-    return SizeTransition(
-      sizeFactor: animation,
-      child: Card(
-        child: ListTile(title: Text(task.title)),
-      ),
-    );
-  }
-
   Future<void> _toggleTaskCompletion(Task task) async {
-    if (task.status == TaskStatus.completed) {
-      task.status = TaskStatus.inProgress;
-    } else {
-      task.status = TaskStatus.completed;
-    }
-    await DatabaseHelper.instance.updateTask(task);
-    setState(() {});
+    final updatedTask = task.copyWith(
+      status: task.status == TaskStatus.completed
+          ? TaskStatus.inProgress
+          : TaskStatus.completed,
+    );
+    await DatabaseHelper.instance.updateTask(updatedTask);
+    _loadTasks(); // Reload to reflect changes
   }
 
   void _navigateToDetail(Task task) async {
@@ -88,10 +70,13 @@ class _TodoListScreenState extends State<TodoListScreen> with SingleTickerProvid
     );
 
     if (result != null) {
-      task.status = result['status'];
-      task.description = result['description'];
-      await DatabaseHelper.instance.updateTask(task);
-      setState(() {});
+      final updatedTask = task.copyWith(
+        title: result['title'],
+        description: result['description'],
+        status: result['status'],
+      );
+      await DatabaseHelper.instance.updateTask(updatedTask);
+      _loadTasks(); // Reload to reflect changes
     }
   }
 
@@ -221,81 +206,77 @@ class _TodoListScreenState extends State<TodoListScreen> with SingleTickerProvid
           ),
         ],
       ),
-      body: AnimatedList(
-        key: _listKey,
-        initialItemCount: _tasks.length,
-        itemBuilder: (context, index, animation) {
-          final task = _tasks[index];
-          return _buildTaskItem(task, animation, index);
-        },
-      ),
+      body: _tasks.isEmpty
+          ? const Center(
+              child: Text('No tasks yet. Add one!'),
+            )
+          : ListView.builder(
+              itemCount: _tasks.length,
+              itemBuilder: (context, index) {
+                final task = _tasks[index];
+                return Card(
+                  child: ListTile(
+                    onTap: () {
+                      _navigateToDetail(task);
+                    },
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    leading: Checkbox(
+                      value: task.status == TaskStatus.completed,
+                      onChanged: (bool? value) {
+                        _toggleTaskCompletion(task);
+                      },
+                      activeColor: Theme.of(context).colorScheme.primary,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                    title: Text(
+                      task.title,
+                      style: TextStyle(
+                        decoration: task.status == TaskStatus.completed
+                            ? TextDecoration.lineThrough
+                            : TextDecoration.none,
+                        color: task.status == TaskStatus.completed ? Colors.grey[500] : Colors.white,
+                        fontWeight: task.status == TaskStatus.completed ? FontWeight.normal : FontWeight.w500,
+                      ),
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (task.description != null && task.description!.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4.0),
+                            child: Text(
+                              task.description!,
+                              style: TextStyle(color: Colors.grey[400]),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        if (task.deadline != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4.0),
+                            child: Text(
+                              intl.DateFormat('Deadline: yyyy-MM-dd – kk:mm').format(task.deadline!),
+                              style: TextStyle(color: Colors.grey[400]),
+                            ),
+                          ),
+                      ],
+                    ),
+                    isThreeLine: true,
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                      onPressed: () => _removeTask(task.id!, index),
+                    ),
+                  ),
+                );
+              },
+            ),
       floatingActionButton: FloatingActionButton(
         onPressed: _displayDialog,
         tooltip: 'Add Task',
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: const Icon(Icons.add),
-      ),
-    );
-  }
-
-  Widget _buildTaskItem(Task task, Animation<double> animation, int index) {
-    return SizeTransition(
-      sizeFactor: animation,
-      child: Card(
-        child: ListTile(
-          onTap: () {
-            _navigateToDetail(task);
-          },
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          leading: Checkbox(
-            value: task.status == TaskStatus.completed,
-            onChanged: (bool? value) {
-              _toggleTaskCompletion(task);
-            },
-            activeColor: Theme.of(context).colorScheme.primary,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ),
-          title: Text(
-            task.title,
-            style: TextStyle(
-              decoration: task.status == TaskStatus.completed
-                  ? TextDecoration.lineThrough
-                  : TextDecoration.none,
-              color: task.status == TaskStatus.completed ? Colors.grey[500] : Colors.white,
-              fontWeight: task.status == TaskStatus.completed ? FontWeight.normal : FontWeight.w500,
-            ),
-          ),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (task.description != null && task.description!.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4.0),
-                  child: Text(
-                    task.description!,
-                    style: TextStyle(color: Colors.grey[400]),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              if (task.deadline != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4.0),
-                  child: Text(
-                    intl.DateFormat('Deadline: yyyy-MM-dd – kk:mm').format(task.deadline!),
-                    style: TextStyle(color: Colors.grey[400]),
-                  ),
-                ),
-            ],
-          ),
-          isThreeLine: true,
-          trailing: IconButton(
-            icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-            onPressed: () => _removeTask(task.id!, index),
-          ),
-        ),
       ),
     );
   }
