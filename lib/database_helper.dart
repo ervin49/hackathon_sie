@@ -1,0 +1,127 @@
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart';
+import './task.dart';
+
+class DatabaseHelper {
+  static final DatabaseHelper instance = DatabaseHelper._privateConstructor();
+  static Database? _database;
+
+  DatabaseHelper._privateConstructor();
+
+  Future<Database> get database async {
+    if (_database != null) return _database!;
+    _database = await _initDatabase();
+    return _database!;
+  }
+
+  Future<Database> _initDatabase() async {
+    final path = join(await getDatabasesPath(), 'tasks_database.db');
+    return await openDatabase(
+      path,
+      version: 1,
+      onCreate: _onCreate,
+    );
+  }
+
+  Future<void> _onCreate(Database db, int version) async {
+    await db.execute('''
+      CREATE TABLE users(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL UNIQUE,
+        password TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE tasks(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        userId INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL,
+        deadline TEXT,
+        FOREIGN KEY (userId) REFERENCES users (id) ON DELETE CASCADE
+      )
+    ''');
+  }
+
+  // User methods
+  Future<int> registerUser(String username, String password) async {
+    final db = await instance.database;
+    return await db.insert('users', {'username': username, 'password': password});
+  }
+
+  Future<Map<String, dynamic>?> loginUser(String username, String password) async {
+    final db = await instance.database;
+    final List<Map<String, dynamic>> maps = await db.query(
+      'users',
+      where: 'username = ? AND password = ?',
+      whereArgs: [username, password],
+    );
+    if (maps.isNotEmpty) {
+      return maps.first;
+    }
+    return null;
+  }
+
+  // Task methods
+  Future<int> addTask(Task task, int userId) async {
+    final db = await instance.database;
+    return await db.insert('tasks', {
+      'userId': userId,
+      'title': task.title,
+      'description': task.description,
+      'status': task.status.toString(),
+      'deadline': task.deadline?.toIso8601String(),
+    });
+  }
+
+  Future<List<Task>> getTasks(int userId) async {
+    final db = await instance.database;
+    final List<Map<String, dynamic>> maps = await db.query(
+      'tasks',
+      where: 'userId = ?',
+      whereArgs: [userId],
+    );
+    return List.generate(maps.length, (i) {
+      return Task(
+        id: maps[i]['id'],
+        title: maps[i]['title'],
+        description: maps[i]['description'],
+        status: TaskStatus.values.firstWhere((e) => e.toString() == maps[i]['status']),
+        deadline: maps[i]['deadline'] != null ? DateTime.parse(maps[i]['deadline']) : null,
+      );
+    });
+  }
+
+  Future<int> updateTask(Task task) async {
+    final db = await instance.database;
+    return await db.update(
+      'tasks',
+      {
+        'title': task.title,
+        'description': task.description,
+        'status': task.status.toString(),
+        'deadline': task.deadline?.toIso8601String(),
+      },
+      where: 'id = ?',
+      whereArgs: [task.id],
+    );
+  }
+
+  Future<int> deleteTask(int id) async {
+    final db = await instance.database;
+    return await db.delete(
+      'tasks',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+}
+
+// Add id to Task model
+extension TaskWithId on Task {
+  int? get id => _id;
+  static int? _id;
+
+  set id(int? value) => _id = value;
+}

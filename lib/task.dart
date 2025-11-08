@@ -1,6 +1,17 @@
+enum TaskStatus { inProgress, completed }
+
 class Task {
-  Task({required this.title, this.completed = false, this.deadline});
+  Task({
+    this.id,
+    required this.title,
+    this.description,
+    this.deadline,
+    TaskStatus? status,
+  }) : status = status ?? TaskStatus.inProgress;
+
+  final int? id;
   String title;
-  bool completed;
+  String? description;
+  TaskStatus status;
   DateTime? deadline;
 }
