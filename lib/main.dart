@@ -1,10 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import './login_screen.dart';
+import './notification_service.dart';
+import 'dart:io';
+import 'package:path/path.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
+
+  // Initialize the notification service
+  await NotificationService().init();
+
   runApp(const MyApp());
 }
 

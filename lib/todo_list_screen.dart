@@ -6,6 +6,7 @@ import './database_helper.dart';
 import './login_screen.dart';
 import './notifications_center_screen.dart';
 import './groups_screen.dart';
+import './notification_service.dart';
 
 class TodoListScreen extends StatefulWidget {
   final int userId;
@@ -21,6 +22,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
   final _titleController = TextEditingController();
   final _descriptionController = TextEditingController();
   DateTime? _selectedDate;
+  final NotificationService _notificationService = NotificationService();
 
   @override
   void initState() {
@@ -39,7 +41,10 @@ class _TodoListScreenState extends State<TodoListScreen> {
 
   Future<void> _addTask(String title, String? description, DateTime? deadline) async {
     final task = Task(title: title, description: description, deadline: deadline);
-    await DatabaseHelper.instance.addTask(task, widget.userId);
+    final taskId = await DatabaseHelper.instance.addTask(task, widget.userId);
+    if (deadline != null) {
+      _notificationService.scheduleDeadlineNotification(taskId, title, deadline);
+    }
     _loadTasks();
     _titleController.clear();
     _descriptionController.clear();
@@ -48,6 +53,7 @@ class _TodoListScreenState extends State<TodoListScreen> {
 
   Future<void> _removeTask(int taskId) async {
     await DatabaseHelper.instance.deleteTask(taskId, widget.userId);
+    _notificationService.cancelNotification(taskId);
     _loadTasks();
   }
 
@@ -62,12 +68,22 @@ class _TodoListScreenState extends State<TodoListScreen> {
   }
 
   void _navigateToDetail(Task task) async {
+    final originalDeadline = task.deadline;
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => TaskDetailScreen(task: task, currentUserId: widget.userId),
       ),
     );
     _loadTasks();
+    final updatedTask = _tasks.firstWhere((t) => t.id == task.id);
+    if (updatedTask.deadline != originalDeadline) {
+      if (originalDeadline != null) {
+        _notificationService.cancelNotification(task.id!);
+      }
+      if (updatedTask.deadline != null) {
+        _notificationService.scheduleDeadlineNotification(updatedTask.id!, updatedTask.title, updatedTask.deadline!);
+      }
+    }
   }
 
   void _navigateToNotifications() async {

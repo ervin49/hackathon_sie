@@ -1,9 +1,12 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import 'package:crypto/crypto.dart';
+import 'dart:convert';
 import './task.dart';
 import './app_notification.dart';
 import './history.dart';
 import './group.dart';
+import './subtask.dart';
 
 enum RegistrationResult {
   success,
@@ -34,49 +37,26 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), 'todo_app.db');
     return await openDatabase(
       path,
-      version: 2, // Version bump to trigger the corrected schema creation
+      version: 1,
       onCreate: _onCreate,
-      onUpgrade: _onUpgrade,
     );
-  }
-
-  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // The simplest and most robust migration strategy is to start fresh.
-    await db.execute('DROP TABLE IF EXISTS group_invitations'); // Drop old mistaken table
-    await db.execute('DROP TABLE IF EXISTS notifications');
-    await db.execute('DROP TABLE IF EXISTS task_history');
-    await db.execute('DROP TABLE IF EXISTS task_participants');
-    await db.execute('DROP TABLE IF EXISTS group_members');
-    await db.execute('DROP TABLE IF EXISTS groups');
-    await db.execute('DROP TABLE IF EXISTS tasks');
-    await db.execute('DROP TABLE IF EXISTS users');
-    await _onCreate(db, newVersion);
   }
 
   Future<void> _onCreate(Database db, int version) async {
     await db.execute('''CREATE TABLE users(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, password TEXT NOT NULL)''');
     await db.execute('''CREATE TABLE tasks(id INTEGER PRIMARY KEY AUTOINCREMENT, ownerId INTEGER NOT NULL, title TEXT NOT NULL, description TEXT, status TEXT NOT NULL, deadline TEXT, FOREIGN KEY (ownerId) REFERENCES users (id) ON DELETE CASCADE)''');
-    await db.execute('''CREATE TABLE task_participants(taskId INTEGER NOT NULL, userId INTEGER NOT NULL, PRIMARY KEY (taskId, userId), FOREIGN KEY (taskId) REFERENCES tasks (id) ON DELETE CASCADE, FOREIGN KEY (userId) REFERENCES users (id) ON DELETE CASCADE)''');
+    await db.execute('''CREATE TABLE task_participants(taskId INTEGER NOT NULL, userId INTEGER NOT NULL, role TEXT NOT NULL, PRIMARY KEY (taskId, userId), FOREIGN KEY (taskId) REFERENCES tasks (id) ON DELETE CASCADE, FOREIGN KEY (userId) REFERENCES users (id) ON DELETE CASCADE)''');
+    await db.execute('''CREATE TABLE notifications(id INTEGER PRIMARY KEY AUTOINCREMENT, fromUserId INTEGER NOT NULL, toUserId INTEGER NOT NULL, taskId INTEGER, groupId INTEGER, type TEXT NOT NULL, status TEXT NOT NULL, FOREIGN KEY (fromUserId) REFERENCES users (id) ON DELETE CASCADE, FOREIGN KEY (toUserId) REFERENCES users (id) ON DELETE CASCADE, FOREIGN KEY (taskId) REFERENCES tasks (id) ON DELETE CASCADE, FOREIGN KEY (groupId) REFERENCES groups (id) ON DELETE CASCADE)''');
     await db.execute('''CREATE TABLE task_history(id INTEGER PRIMARY KEY AUTOINCREMENT, taskId INTEGER NOT NULL, userId INTEGER NOT NULL, action TEXT NOT NULL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (taskId) REFERENCES tasks (id) ON DELETE CASCADE, FOREIGN KEY (userId) REFERENCES users (id) ON DELETE CASCADE)''');
     await db.execute('''CREATE TABLE groups(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, ownerId INTEGER NOT NULL, FOREIGN KEY (ownerId) REFERENCES users (id) ON DELETE CASCADE)''');
     await db.execute('''CREATE TABLE group_members(groupId INTEGER NOT NULL, userId INTEGER NOT NULL, role TEXT NOT NULL, PRIMARY KEY (groupId, userId), FOREIGN KEY (groupId) REFERENCES groups (id) ON DELETE CASCADE, FOREIGN KEY (userId) REFERENCES users (id) ON DELETE CASCADE)''');
-    
-    // CORRECTED UNIFIED NOTIFICATIONS TABLE
-    await db.execute('''
-      CREATE TABLE notifications(
-        id INTEGER PRIMARY KEY AUTOINCREMENT, 
-        fromUserId INTEGER NOT NULL, 
-        toUserId INTEGER NOT NULL, 
-        taskId INTEGER, 
-        groupId INTEGER, 
-        type TEXT NOT NULL, 
-        status TEXT NOT NULL, 
-        FOREIGN KEY (fromUserId) REFERENCES users (id) ON DELETE CASCADE, 
-        FOREIGN KEY (toUserId) REFERENCES users (id) ON DELETE CASCADE, 
-        FOREIGN KEY (taskId) REFERENCES tasks (id) ON DELETE CASCADE, 
-        FOREIGN KEY (groupId) REFERENCES groups (id) ON DELETE CASCADE
-      )
-    ''');
+    await db.execute('''CREATE TABLE subtasks(id INTEGER PRIMARY KEY AUTOINCREMENT, taskId INTEGER NOT NULL, title TEXT NOT NULL, isDone INTEGER NOT NULL DEFAULT 0, FOREIGN KEY (taskId) REFERENCES tasks (id) ON DELETE CASCADE)''');
+  }
+
+  String _hashPassword(String password) {
+    final bytes = utf8.encode(password);
+    final digest = sha256.convert(bytes);
+    return digest.toString();
   }
 
   Future<void> _logHistory(int taskId, int userId, String action) async {
@@ -94,15 +74,21 @@ class DatabaseHelper {
     final db = await instance.database;
     final usernameCheck = await db.query('users', where: 'username = ?', whereArgs: [username]);
     if (usernameCheck.isNotEmpty) return RegistrationResponse(RegistrationResult.usernameExists);
-    final passwordCheck = await db.query('users', where: 'password = ?', whereArgs: [password]);
-    if (passwordCheck.isNotEmpty) return RegistrationResponse(RegistrationResult.passwordUsed, username: passwordCheck.first['username'] as String?);
-    await db.insert('users', {'username': username, 'password': password});
+
+    final hashedPassword = _hashPassword(password);
+    final passwordCheck = await db.query('users', where: 'password = ?', whereArgs: [hashedPassword]);
+    if (passwordCheck.isNotEmpty) {
+      return RegistrationResponse(RegistrationResult.passwordUsed, username: passwordCheck.first['username'] as String?);
+    }
+
+    await db.insert('users', {'username': username, 'password': hashedPassword});
     return RegistrationResponse(RegistrationResult.success);
   }
 
   Future<Map<String, dynamic>?> loginUser(String username, String password) async {
     final db = await instance.database;
-    final maps = await db.query('users', where: 'username = ? AND password = ?', whereArgs: [username, password]);
+    final hashedPassword = _hashPassword(password);
+    final maps = await db.query('users', where: 'username = ? AND password = ?', whereArgs: [username, hashedPassword]);
     return maps.isNotEmpty ? maps.first : null;
   }
 
@@ -114,14 +100,14 @@ class DatabaseHelper {
   Future<int> addTask(Task task, int ownerId) async {
     final db = await instance.database;
     final taskId = await db.insert('tasks', {'ownerId': ownerId, 'title': task.title, 'description': task.description, 'status': task.status.toString(), 'deadline': task.deadline?.toIso8601String()});
-    await assignTaskToUser(taskId, ownerId);
+    await assignTaskToUser(taskId, ownerId, isAdmin: true);
     await _logHistory(taskId, ownerId, 'Created task');
     return taskId;
   }
 
-  Future<void> assignTaskToUser(int taskId, int userId) async {
+  Future<void> assignTaskToUser(int taskId, int userId, {bool isAdmin = false}) async {
     final db = await instance.database;
-    await db.insert('task_participants', {'taskId': taskId, 'userId': userId}, conflictAlgorithm: ConflictAlgorithm.ignore);
+    await db.insert('task_participants', {'taskId': taskId, 'userId': userId, 'role': isAdmin ? 'admin' : 'member'}, conflictAlgorithm: ConflictAlgorithm.ignore);
     await _logHistory(taskId, userId, 'Joined task');
   }
 
@@ -220,5 +206,32 @@ class DatabaseHelper {
   Future<List<Map<String, dynamic>>> getGroupMembers(int groupId) async {
     final db = await instance.database;
     return await db.rawQuery('''SELECT u.id, u.username, gm.role FROM users u JOIN group_members gm ON u.id = gm.userId WHERE gm.groupId = ?''', [groupId]);
+  }
+
+  Future<void> removeUserFromGroup(int userId, int groupId) async {
+    final db = await instance.database;
+    await db.delete('group_members', where: 'userId = ? AND groupId = ?', whereArgs: [userId, groupId]);
+  }
+  
+  Future<bool> isUserAdminInTask(int userId, int taskId) async {
+    final db = await instance.database;
+    final maps = await db.query('task_participants', where: 'userId = ? AND taskId = ? AND role = ?', whereArgs: [userId, taskId, 'admin']);
+    return maps.isNotEmpty;
+  }
+
+  Future<List<Subtask>> getSubtasks(int taskId) async {
+    final db = await instance.database;
+    final maps = await db.query('subtasks', where: 'taskId = ?', whereArgs: [taskId]);
+    return List.generate(maps.length, (i) => Subtask.fromMap(maps[i]));
+  }
+
+  Future<void> addSubtask(int taskId, String title) async {
+    final db = await instance.database;
+    await db.insert('subtasks', {'taskId': taskId, 'title': title});
+  }
+
+  Future<void> updateSubtaskStatus(int subtaskId, bool isDone) async {
+    final db = await instance.database;
+    await db.update('subtasks', {'isDone': isDone ? 1 : 0}, where: 'id = ?', whereArgs: [subtaskId]);
   }
 }

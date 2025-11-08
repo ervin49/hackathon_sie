@@ -1,0 +1,1 @@
+ /home/ervin/hackathon_sie/.dart_tool/flutter_build/6bc2a57053e6e75a94d1b7a693b183b3/native_assets.json: 
