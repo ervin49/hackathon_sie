@@ -12,18 +12,21 @@ class TaskDetailScreen extends StatefulWidget {
 }
 
 class _TaskDetailScreenState extends State<TaskDetailScreen> {
+  late final TextEditingController _titleController;
   late final TextEditingController _descriptionController;
   late TaskStatus _status;
 
   @override
   void initState() {
     super.initState();
+    _titleController = TextEditingController(text: widget.task.title);
     _descriptionController = TextEditingController(text: widget.task.description);
     _status = widget.task.status;
   }
 
   @override
   void dispose() {
+    _titleController.dispose();
     _descriptionController.dispose();
     super.dispose();
   }
@@ -46,10 +49,11 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     }
   }
 
-  void _popWithResult(TaskStatus status) {
+  void _popWithResult() {
     Navigator.of(context).pop({
-      'status': status,
+      'title': _titleController.text,
       'description': _descriptionController.text,
+      'status': _status,
     });
   }
 
@@ -60,12 +64,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         title: const Text('Task Details'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => _popWithResult(_status), // Pop with current status
+          onPressed: _popWithResult,
         ),
       ),
       body: WillPopScope(
         onWillPop: () async {
-          _popWithResult(_status); // Also handle system back gesture
+          _popWithResult(); // Also handle system back gesture
           return true;
         },
         child: Padding(
@@ -73,9 +77,13 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                widget.task.title,
+              TextField(
+                controller: _titleController,
                 style: Theme.of(context).textTheme.headlineSmall,
+                decoration: const InputDecoration(
+                  labelText: 'Title',
+                  border: OutlineInputBorder(),
+                ),
               ),
               const SizedBox(height: 16.0),
               TextField(
@@ -107,7 +115,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     const Text('Deadline:'),
                     const SizedBox(width: 8.0),
                     Text(
-                      DateFormat('yyyy-MM-dd – kk:mm').format(widget.task.deadline!),
+                      DateFormat('yyyy-MM-dd – h:mm a').format(widget.task.deadline!),
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                   ],

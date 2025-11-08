@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' as intl;
+
 import './task.dart';
 import './task_detail_screen.dart';
 import './database_helper.dart';
@@ -14,11 +15,12 @@ class TodoListScreen extends StatefulWidget {
   State<TodoListScreen> createState() => _TodoListScreenState();
 }
 
-class _TodoListScreenState extends State<TodoListScreen> with SingleTickerProviderStateMixin {
+class _TodoListScreenState extends State<TodoListScreen> {
   final GlobalKey<AnimatedListState> _listKey = GlobalKey<AnimatedListState>();
-  List<Task> _tasks = [];
   final _titleController = TextEditingController();
   final _descriptionController = TextEditingController();
+
+  final List<Task> _tasks = [];
   DateTime? _selectedDate;
 
   @override
@@ -28,59 +30,91 @@ class _TodoListScreenState extends State<TodoListScreen> with SingleTickerProvid
   }
 
   Future<void> _loadTasks() async {
-    final tasks = await DatabaseHelper.instance.getTasks(widget.userId);
-    for (var i = 0; i < tasks.length; i++) {
-      _tasks.add(tasks[i]);
-      _listKey.currentState?.insertItem(i);
+    if (_tasks.isNotEmpty && _listKey.currentState != null) {
+      for (int i = _tasks.length - 1; i >= 0; i--) {
+        final removed = _tasks.removeAt(i);
+        _listKey.currentState!.removeItem(
+          i,
+              (context, animation) => _buildRemovedTaskItem(removed, animation),
+          duration: const Duration(milliseconds: 150),
+        );
+      }
+    } else {
+      _tasks.clear();
     }
+
+    final fetched = await DatabaseHelper.instance.getTasks(widget.userId);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      for (var i = 0; i < fetched.length; i++) {
+        _tasks.add(fetched[i]);
+        _listKey.currentState?.insertItem(i, duration: const Duration(milliseconds: 200));
+      }
+      setState(() {});
+    });
   }
 
   Future<void> _addTask(String title, String? description, DateTime? deadline) async {
-    if (title.isNotEmpty) {
-      final task = Task(title: title, description: description, deadline: deadline);
-      final id = await DatabaseHelper.instance.addTask(task, widget.userId);
-      final newTask = task.copyWith(id: id);
+    if (title.trim().isEmpty) return;
 
-      _tasks.add(newTask);
-      _listKey.currentState?.insertItem(_tasks.length - 1);
+    final task = Task(title: title.trim(), description: description?.trim(), deadline: deadline);
+    final id = await DatabaseHelper.instance.addTask(task, widget.userId);
+    final newTask = task.copyWith(id: id);
 
-      _titleController.clear();
-      _descriptionController.clear();
-      _selectedDate = null;
-    }
+    final insertIndex = _tasks.length;
+    _tasks.add(newTask);
+    _listKey.currentState?.insertItem(insertIndex, duration: const Duration(milliseconds: 250));
+
+    _titleController.clear();
+    _descriptionController.clear();
+    _selectedDate = null;
+    setState(() {});
   }
 
   Future<void> _removeTask(int taskId, int index) async {
-    final taskToRemove = _tasks[index];
-    _tasks.removeAt(index);
+    final removedTask = _tasks.removeAt(index);
+
     _listKey.currentState?.removeItem(
       index,
-      (context, animation) => _buildRemovedTaskItem(taskToRemove, animation),
-      duration: const Duration(milliseconds: 500),
+          (context, animation) => _buildRemovedTaskItem(removedTask, animation),
+      duration: const Duration(milliseconds: 300),
     );
+
     await DatabaseHelper.instance.deleteTask(taskId);
+    setState(() {});
   }
 
   Widget _buildRemovedTaskItem(Task task, Animation<double> animation) {
     return SizeTransition(
       sizeFactor: animation,
       child: Card(
-        child: ListTile(title: Text(task.title)),
+        child: ListTile(
+          title: Text(task.title),
+          subtitle: task.deadline != null
+              ? Text(
+            intl.DateFormat("'Deadline:' yyyy-MM-dd – h:mm a").format(task.deadline!),
+          )
+              : null,
+        ),
       ),
     );
   }
 
   Future<void> _toggleTaskCompletion(Task task) async {
-    if (task.status == TaskStatus.completed) {
-      task.status = TaskStatus.inProgress;
-    } else {
-      task.status = TaskStatus.completed;
+    final newStatus =
+    task.status == TaskStatus.completed ? TaskStatus.inProgress : TaskStatus.completed;
+    final updatedTask = task.copyWith(status: newStatus);
+
+    final idx = _tasks.indexWhere((t) => t.id == task.id);
+    if (idx != -1) {
+      _tasks[idx] = updatedTask;
+      setState(() {});
     }
-    await DatabaseHelper.instance.updateTask(task);
-    setState(() {});
+
+    await DatabaseHelper.instance.updateTask(updatedTask);
   }
 
-  void _navigateToDetail(Task task) async {
+  Future<void> _navigateToDetail(Task task) async {
     final result = await Navigator.of(context).push<Map<String, dynamic>>(
       MaterialPageRoute(
         builder: (context) => TaskDetailScreen(task: task),
@@ -88,34 +122,55 @@ class _TodoListScreenState extends State<TodoListScreen> with SingleTickerProvid
     );
 
     if (result != null) {
-      task.status = result['status'];
-      task.description = result['description'];
-      await DatabaseHelper.instance.updateTask(task);
-      setState(() {});
+      final updatedTask = task.copyWith(
+        title: (result['title'] as String?)?.trim().isNotEmpty == true
+            ? result['title'] as String
+            : task.title,
+        description: result['description'] as String? ?? task.description,
+        status: result['status'] as TaskStatus? ?? task.status,
+      );
+
+      final idx = _tasks.indexWhere((t) => t.id == task.id);
+      if (idx != -1) {
+        _tasks[idx] = updatedTask;
+        setState(() {});
+      }
+
+      await DatabaseHelper.instance.updateTask(updatedTask);
     }
   }
 
   void _logout() {
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (context) => const LoginScreen()),
-      (Route<dynamic> route) => false,
+          (Route<dynamic> route) => false,
     );
   }
 
-  Future<void> _selectDate(BuildContext context, StateSetter setState) async {
+  Future<void> _selectDate(BuildContext context, StateSetter setInnerState) async {
+    final DateTime now = DateTime.now();
+
     final DateTime? pickedDate = await showDatePicker(
       context: context,
-      initialDate: _selectedDate ?? DateTime.now(),
-      firstDate: DateTime.now(),
+      initialDate: _selectedDate ?? now,
+      firstDate: now,
       lastDate: DateTime(2101),
     );
+
     if (pickedDate != null) {
       final TimeOfDay? pickedTime = await showTimePicker(
         context: context,
-        initialTime: TimeOfDay.fromDateTime(_selectedDate ?? DateTime.now()),
+        initialTime: TimeOfDay.fromDateTime(_selectedDate ?? now),
+        builder: (context, child) {
+          return MediaQuery(
+            data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: false),
+            child: child!,
+          );
+        },
       );
+
       if (pickedTime != null) {
-        setState(() {
+        setInnerState(() {
           _selectedDate = DateTime(
             pickedDate.year,
             pickedDate.month,
@@ -132,15 +187,14 @@ class _TodoListScreenState extends State<TodoListScreen> with SingleTickerProvid
     _selectedDate = null;
     _titleController.clear();
     _descriptionController.clear();
+
     return showDialog<void>(
       context: context,
       builder: (BuildContext context) {
         return StatefulBuilder(
-          builder: (context, setState) {
+          builder: (context, setInnerState) {
             return AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(15.0),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15.0)),
               title: const Text('Add a new task'),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -168,22 +222,20 @@ class _TodoListScreenState extends State<TodoListScreen> with SingleTickerProvid
                         child: Text(
                           _selectedDate == null
                               ? 'No deadline set'
-                              : intl.DateFormat('yyyy-MM-dd – kk:mm').format(_selectedDate!),
+                              : intl.DateFormat('yyyy-MM-dd – h:mm a').format(_selectedDate!),
                         ),
                       ),
                       IconButton(
                         icon: const Icon(Icons.calendar_today),
-                        onPressed: () => _selectDate(context, setState),
-                      )
+                        onPressed: () => _selectDate(context, setInnerState),
+                      ),
                     ],
-                  )
+                  ),
                 ],
               ),
               actions: <Widget>[
                 TextButton(
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                  },
+                  onPressed: () => Navigator.of(context).pop(),
                   child: const Text('Cancel'),
                 ),
                 TextButton(
@@ -207,12 +259,11 @@ class _TodoListScreenState extends State<TodoListScreen> with SingleTickerProvid
 
   @override
   Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'To-Do List',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
+        title: const Text('To-Do List', style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         actions: [
           IconButton(
@@ -223,10 +274,10 @@ class _TodoListScreenState extends State<TodoListScreen> with SingleTickerProvid
       ),
       body: AnimatedList(
         key: _listKey,
-        initialItemCount: _tasks.length,
+        initialItemCount: _tasks.length, // la start e 0; items vin prin _loadTasks()
         itemBuilder: (context, index, animation) {
           final task = _tasks[index];
-          return _buildTaskItem(task, animation, index);
+          return _buildTaskItem(task, animation, index, textTheme);
         },
       ),
       floatingActionButton: FloatingActionButton(
@@ -238,44 +289,43 @@ class _TodoListScreenState extends State<TodoListScreen> with SingleTickerProvid
     );
   }
 
-  Widget _buildTaskItem(Task task, Animation<double> animation, int index) {
+  Widget _buildTaskItem(
+      Task task,
+      Animation<double> animation,
+      int index,
+      TextTheme textTheme,
+      ) {
+    final isDone = task.status == TaskStatus.completed;
+
     return SizeTransition(
       sizeFactor: animation,
       child: Card(
         child: ListTile(
-          onTap: () {
-            _navigateToDetail(task);
-          },
+          onTap: () => _navigateToDetail(task),
           contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           leading: Checkbox(
-            value: task.status == TaskStatus.completed,
-            onChanged: (bool? value) {
-              _toggleTaskCompletion(task);
-            },
+            value: isDone,
+            onChanged: (_) => _toggleTaskCompletion(task),
             activeColor: Theme.of(context).colorScheme.primary,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(4),
-            ),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
           ),
           title: Text(
             task.title,
-            style: TextStyle(
-              decoration: task.status == TaskStatus.completed
-                  ? TextDecoration.lineThrough
-                  : TextDecoration.none,
-              color: task.status == TaskStatus.completed ? Colors.grey[500] : Colors.white,
-              fontWeight: task.status == TaskStatus.completed ? FontWeight.normal : FontWeight.w500,
+            style: textTheme.titleMedium?.copyWith(
+              decoration: isDone ? TextDecoration.lineThrough : TextDecoration.none,
+              color: isDone ? Colors.grey[600] : null,
+              fontWeight: isDone ? FontWeight.normal : FontWeight.w600,
             ),
           ),
           subtitle: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (task.description != null && task.description!.isNotEmpty)
+              if ((task.description ?? '').trim().isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 4.0),
                   child: Text(
-                    task.description!,
-                    style: TextStyle(color: Colors.grey[400]),
+                    task.description!.trim(),
+                    style: textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -284,8 +334,8 @@ class _TodoListScreenState extends State<TodoListScreen> with SingleTickerProvid
                 Padding(
                   padding: const EdgeInsets.only(top: 4.0),
                   child: Text(
-                    intl.DateFormat('Deadline: yyyy-MM-dd – kk:mm').format(task.deadline!),
-                    style: TextStyle(color: Colors.grey[400]),
+                    intl.DateFormat("'Deadline:' yyyy-MM-dd – h:mm a").format(task.deadline!),
+                    style: textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
                   ),
                 ),
             ],
